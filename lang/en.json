@@ -5,10 +5,6 @@
                 "Name": "History size",
                 "Hint": "How many navigation steps to remember."
             },
-            "reopenClosed": {
-                "Name": "Reopen closed windows",
-                "Hint": "When going back to a window that has since been closed, reopen it. If disabled, closed windows are skipped."
-            },
             "forwardButton": {
                 "Name": "Use mouse Forward button",
                 "Hint": "Mouse Forward goes forward again after going back."

@@ -5,14 +5,16 @@
  * browser, module windows...) and lets the mouse Back/Forward buttons step through it.
  *
  * A history entry is a window plus a snapshot of every tab group on it, e.g.
- *   { app, uuid, state: { "v1:0": "inventory", "v1:1": "encounter" } }
+ *   { app, state: { "v1:0": "inventory", "v1:1": "encounter" } }
  * Keys are "v1:<index into app._tabs>" for ApplicationV1 Tabs controllers and "v2:<group>" for
- * ApplicationV2 tabGroups. `uuid` is set for document sheets so a deleted document's sheet is skipped.
+ * ApplicationV2 tabGroups.
  *
  * Entries are recorded when:
  *  - a framed window becomes the active window (observed via the ui.activeWindow property, which both
  *    V1 and V2 windows set when they render or are brought to the front), and
  *  - a tab changes on a framed window (Tabs#activate for V1, ApplicationV2#changeTab for V2).
+ *
+ * When a window closes, all of its entries are removed, so Back/Forward only visit open windows.
  */
 
 const MODULE_ID = "back-button-navigation";
@@ -23,9 +25,14 @@ const BUTTON_FORWARD = 4;
 const SAME_PRESS_MS = 500;
 
 const nav = {
-    /** @type {{app: object, uuid: string | null, state: Record<string, string>}[]} */
+    /** @type {{app: object, state: Record<string, string>}[]} */
     entries: [],
     index: -1,
+    /**
+     * True when the current window was closed: the position is then just after entries[index], so
+     * Back goes to entries[index] itself rather than the one before it.
+     */
+    detached: false,
     /** True while a restore is applying synchronous tab/focus changes, so they are not recorded. */
     restoring: false,
     /** True while an async back/forward is in progress, to drop overlapping presses. */
@@ -53,21 +60,11 @@ function setting(key) {
     }
 }
 
-function documentOf(app) {
-    const doc = app?.document ?? app?.object;
-    return doc && typeof doc.uuid === "string" ? doc : null;
-}
-
 /** Any framed (popped-out) window is tracked; HUDs, the sidebar and other embedded UI are not. */
 function isTracked(app) {
     if (!app) return false;
     if (app instanceof foundry.applications.api.ApplicationV2) return Boolean(app.hasFrame);
     return Boolean(app.popOut);
-}
-
-/** Dialogs resolve once and are discarded, so they are never reopened after closing. */
-function isDialog(app) {
-    return app instanceof foundry.appv1.api.Dialog || app instanceof foundry.applications.api.DialogV2;
 }
 
 function snapshot(app) {
@@ -86,10 +83,14 @@ function snapshot(app) {
 }
 
 function current() {
+    if (nav.detached) return null;
     return nav.entries[nav.index] ?? null;
 }
 
 function push(app, state) {
+    // Landing on a window after the current one closed resumes from the entry before the gap; if that
+    // entry is this same window and state, nothing new is recorded.
+    nav.detached = false;
     const cur = current();
     if (cur && cur.app === app) {
         if (foundry.utils.objectsEqual(cur.state, state)) return;
@@ -101,7 +102,7 @@ function push(app, state) {
 
     // New navigation discards any "forward" history, like a browser.
     nav.entries.splice(nav.index + 1);
-    nav.entries.push({ app, uuid: documentOf(app)?.uuid ?? null, state });
+    nav.entries.push({ app, state });
 
     const max = Math.max(2, Number(setting("historySize")) || 50);
     if (nav.entries.length > max) nav.entries.splice(0, nav.entries.length - max);
@@ -134,6 +135,27 @@ function onTabChange(app, key, previousTab) {
     queueMicrotask(() => {
         if (nav.coalesceApp === app) nav.coalesceApp = null;
     });
+}
+
+/** Remove a closed window from history, merging the neighbours that become identical. */
+function onClose(app) {
+    if (nav.coalesceApp === app) nav.coalesceApp = null;
+    if (!nav.entries.some((entry) => entry.app === app)) return;
+
+    const wasCurrent = current()?.app === app;
+    const kept = [];
+    let atOrBefore = 0; // kept entries at or before the current position
+    nav.entries.forEach((entry, i) => {
+        if (entry.app === app) return;
+        const last = kept.at(-1);
+        if (last && last.app === entry.app && foundry.utils.objectsEqual(last.state, entry.state)) return;
+        kept.push(entry);
+        if (i <= nav.index) atOrBefore++;
+    });
+
+    nav.entries = kept;
+    nav.index = atOrBefore - 1;
+    if (wasCurrent) nav.detached = true;
 }
 
 function patchTabs() {
@@ -247,14 +269,8 @@ function applyState(app, state, live) {
 async function restore(entry) {
     const app = entry.app;
 
-    if (!app.rendered) {
-        if (!setting("reopenClosed") || isDialog(app)) return false;
-        if (entry.uuid && !(await fromUuid(entry.uuid))) return false; // document was deleted
-        applyState(app, entry.state, false);
-        // Rendering sets ui.activeWindow, but onFocus ignores it because this entry is already current.
-        await app.render(true);
-        return true;
-    }
+    // Closed windows are normally removed from history on close; skip any that slipped through.
+    if (!app.rendered) return false;
 
     if (app.minimized ?? app._minimized) await app.maximize();
     nav.restoring = true;
@@ -272,10 +288,12 @@ async function go(delta) {
     if (nav.navigating) return;
     nav.navigating = true;
     const start = nav.index;
+    const wasDetached = nav.detached;
     const from = current();
     let removed = 0;
     try {
-        let i = start + delta;
+        // When detached, the position is just after entries[start], so Back starts at start itself.
+        let i = wasDetached && delta < 0 ? start : start + delta;
         while (i >= 0 && i < nav.entries.length) {
             const entry = nav.entries[i];
             // Skip steps that would land exactly where we already are (a no-op press).
@@ -284,6 +302,7 @@ async function go(delta) {
                 continue;
             }
             nav.index = i;
+            nav.detached = false;
             nav.coalesceApp = null;
             let ok = false;
             try {
@@ -293,12 +312,13 @@ async function go(delta) {
             }
             if (ok) return;
 
-            // Drop entries for deleted documents / unreopenable windows and keep going.
+            // Drop entries for closed windows and keep going.
             nav.entries.splice(i, 1);
             removed++;
             if (delta < 0) i--;
         }
         // Nothing to go to: stay where we were.
+        nav.detached = wasDetached;
         nav.index = Math.min(delta < 0 ? start - removed : start, nav.entries.length - 1);
     } finally {
         nav.navigating = false;
@@ -455,7 +475,6 @@ function registerSettings() {
         });
 
     register("historySize", { type: Number, default: 50, range: { min: 10, max: 200, step: 10 } });
-    register("reopenClosed", { type: Boolean, default: true });
     register("forwardButton", { type: Boolean, default: true });
 }
 
@@ -464,6 +483,8 @@ Hooks.once("init", () => {
     patchTabs();
     patchChangeTab();
     observeActiveWindow();
+    Hooks.on("closeApplication", onClose); // ApplicationV1
+    Hooks.on("closeApplicationV2", onClose);
 
     for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "auxclick", "click"]) {
         window.addEventListener(type, onMouseEvent, { capture: true });
@@ -478,7 +499,8 @@ Hooks.once("init", () => {
         get history() {
             return {
                 index: nav.index,
-                entries: nav.entries.map(({ app, uuid, state }) => ({ window: app.constructor.name, uuid, state })),
+                detached: nav.detached,
+                entries: nav.entries.map(({ app, state }) => ({ window: app.constructor.name, state })),
             };
         },
     };
