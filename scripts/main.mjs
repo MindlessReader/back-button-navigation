@@ -408,8 +408,26 @@ Hooks.once("init", () => {
     };
 });
 
+/**
+ * Browsers skip history entries the user never interacted with when going Back (an anti
+ * "back-button hijacking" intervention; Firefox: browser.navigation.requireUserInteraction). Foundry
+ * pushes its guard entry during load, before any interaction, so Back can jump straight past it and
+ * leave the game. Instead, add our guard entry on the user's first real interaction: the entry that
+ * was current during that interaction is then marked as interacted with, so Back lands on it and
+ * fires popstate, which onPopState handles.
+ */
+function guardHistoryOnFirstInteraction() {
+    const events = ["pointerup", "keyup"];
+    const onInteract = (event) => {
+        if (event.type === "pointerup" && (event.button === BUTTON_BACK || event.button === BUTTON_FORWARD)) return;
+        for (const type of events) window.removeEventListener(type, onInteract, { capture: true });
+        history.pushState(null, "", location.href);
+        console.debug(`${MODULE_ID} | history guard added`);
+    };
+    for (const type of events) window.addEventListener(type, onInteract, { capture: true });
+}
+
 Hooks.once("ready", () => {
-    // Foundry already pushes a guard history entry in the game view; add our own too in case a
-    // version doesn't, so a history Back always lands on a same-page entry instead of unloading.
-    if (game.view === "game") history.pushState(null, "", location.href);
+    if (game.view === "game") guardHistoryOnFirstInteraction();
+    console.log(`${MODULE_ID} | v${game.modules.get(MODULE_ID).version} ready`);
 });
