@@ -2,10 +2,10 @@
     "id": "back-button-navigation",
     "title": "Back Button Navigation",
     "description": "<p>Turns the mouse Back/Forward buttons into an undo/redo for window navigation: go back to the previous tab of a window, or to the previously focused (or closed) window, instead of navigating the browser away from the game.</p>",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "authors": [
         {
-            "name": "Fabian"
+            "name": "MindlessReader"
         }
     ],
     "compatibility": {
@@ -24,5 +24,5 @@
     ],
     "url": "https://github.com/MindlessReader/back-button-navigation",
     "manifest": "https://github.com/MindlessReader/back-button-navigation/releases/latest/download/module.json",
-    "download": "https://github.com/MindlessReader/back-button-navigation/releases/download/v0.2.0/module.zip"
+    "download": "https://github.com/MindlessReader/back-button-navigation/releases/download/v0.2.1/module.zip"
 }
