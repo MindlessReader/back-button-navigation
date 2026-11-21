@@ -29,9 +29,17 @@ const nav = {
     navigating: false,
     /** App whose last tab-change entry can still absorb more changes in the same task (e.g. PF2e openTab). */
     coalesceApp: null,
-    /** Timestamp of the last mouse-button navigation, to ignore a popstate caused by the same press. */
-    lastMouseNav: 0,
+    /**
+     * Last navigation trigger. One physical press can arrive through two sources (Firefox fires both
+     * the mouse/key event and a popstate), so a second trigger from another source shortly after is
+     * treated as the same press.
+     * @type {{source: string, time: number} | null}
+     */
+    lastTrigger: null,
 };
+
+/** Window (ms) in which triggers from different sources count as one press. */
+const SAME_PRESS_MS = 500;
 
 /* -------------------------------------------- */
 /*  Helpers                                     */
@@ -313,36 +321,49 @@ function onMouseEvent(event) {
     // Don't cancel pointerdown: that would suppress the compatibility mousedown/mouseup events.
     if (event.type !== "pointerdown") event.preventDefault();
 
-    if (event.type === "mouseup") {
-        nav.lastMouseNav = Date.now();
-        go(isBack ? -1 : 1);
-    }
+    if (event.type === "mouseup") trigger("mouse", isBack ? -1 : 1);
 }
 
 function onKeyDown(event) {
     if (event.key === "BrowserBack") {
         event.preventDefault();
-        nav.lastMouseNav = Date.now();
-        go(-1);
+        trigger("key", -1);
     } else if (event.key === "BrowserForward" && setting("forwardButton")) {
         event.preventDefault();
-        nav.lastMouseNav = Date.now();
-        go(1);
+        trigger("key", 1);
     }
 }
 
+/** Start a back/forward, unless this is the second source of a press that was already handled. */
+function trigger(source, delta) {
+    const now = Date.now();
+    const last = nav.lastTrigger;
+    if (last && last.source !== source && now - last.time < SAME_PRESS_MS) {
+        nav.lastTrigger = null;
+        return;
+    }
+    nav.lastTrigger = { source, time: now };
+    go(delta);
+}
+
 /**
- * Keep a sentinel history entry on top so the browser's own Back (Alt+Left, browser button, or a
- * mouse whose Back press couldn't be cancelled) lands on it and we can turn it into a sheet Back.
+ * Browsers that won't let a page cancel the mouse Back button (Firefox) perform a real history Back
+ * instead. In the game view Foundry keeps a guard entry on top of the history and answers popstate
+ * with a "navigate back?" confirm(). This listener is registered at init in the capture phase, so it
+ * runs before Foundry's and can swallow the event: re-add the guard entry and step back through
+ * sheets instead.
  */
-function guardBrowserHistory() {
-    const sentinel = { [MODULE_ID]: true };
-    history.pushState(sentinel, "", location.href);
-    window.addEventListener("popstate", () => {
-        history.pushState(sentinel, "", location.href);
-        if (Date.now() - nav.lastMouseNav < 500) return; // already handled by the mouse/key listener
-        go(-1);
-    });
+function onPopState(event) {
+    if (game._goingBack) return; // Foundry is deliberately leaving the page; don't interfere.
+
+    const last = nav.lastTrigger;
+    const causedByPress = last && last.source !== "popstate" && Date.now() - last.time < SAME_PRESS_MS;
+    // With the setting off, a plain browser Back (Alt+Left, toolbar) keeps Foundry's own confirm.
+    if (!causedByPress && !setting("captureBrowserBack")) return;
+
+    event.stopImmediatePropagation();
+    history.pushState(null, "", location.href);
+    trigger("popstate", -1);
 }
 
 /* -------------------------------------------- */
@@ -362,7 +383,7 @@ function registerSettings() {
     register("historySize", { type: Number, default: 50, range: { min: 10, max: 200, step: 10 } });
     register("reopenClosed", { type: Boolean, default: true });
     register("forwardButton", { type: Boolean, default: true });
-    register("captureBrowserBack", { type: Boolean, default: true, requiresReload: true });
+    register("captureBrowserBack", { type: Boolean, default: true });
 }
 
 Hooks.once("init", () => {
@@ -375,6 +396,8 @@ Hooks.once("init", () => {
         window.addEventListener(type, onMouseEvent, { capture: true });
     }
     window.addEventListener("keydown", onKeyDown, { capture: true });
+    // Must be added before Foundry adds its own popstate listener during game setup.
+    if (game.view === "game") window.addEventListener("popstate", onPopState, { capture: true });
 
     game.modules.get(MODULE_ID).api = {
         back: () => go(-1),
@@ -386,5 +409,7 @@ Hooks.once("init", () => {
 });
 
 Hooks.once("ready", () => {
-    if (setting("captureBrowserBack")) guardBrowserHistory();
+    // Foundry already pushes a guard history entry in the game view; add our own too in case a
+    // version doesn't, so a history Back always lands on a same-page entry instead of unloading.
+    if (game.view === "game") history.pushState(null, "", location.href);
 });

@@ -15,7 +15,7 @@
             },
             "captureBrowserBack": {
                 "Name": "Capture browser Back (Alt+Left)",
-                "Hint": "Also catch the browser's own Back navigation (Alt+Left, the browser's Back button) so it steps back through sheets instead of leaving the game."
+                "Hint": "Also catch the browser's own Back navigation (Alt+Left, the browser's Back button) so it steps back through sheets instead of asking to exit the game. The mouse Back button is always handled."
             }
         }
     }

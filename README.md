@@ -23,7 +23,7 @@ Each history step is a sheet plus the active tab in every tab group on it. A new
 | History size | 50 | Steps remembered |
 | Reopen closed sheets | on | Off = closed sheets are skipped |
 | Use mouse Forward button | on | |
-| Capture browser Back (Alt+Left) | on | Alt+Left / the browser's Back button also step back through sheets (reload required) |
+| Capture browser Back (Alt+Left) | on | Alt+Left / the browser's Back button also step back through sheets. Off = they get Foundry's usual "exit the game?" confirm. The mouse Back button is always handled. |
 
 ## Macro API
 
@@ -39,4 +39,4 @@ api.history; // { index, entries: [{ uuid, state }] }
 - `foundry.applications.ux.Tabs#activate` (ApplicationV1 sheets) and `ApplicationV2#changeTab` are wrapped to record tab changes.
 - `ui.activeWindow` is turned into an accessor property to observe focus. Both V1 (on render) and V2 (on render and every pointerdown) assign it.
 - Mouse buttons 3/4 are handled in the capture phase on `window`, ahead of Foundry's own listeners, so the window under the cursor isn't brought to the front first.
-- A sentinel `history.pushState` entry catches any browser Back navigation that couldn't be cancelled.
+- Some browsers (Firefox) don't let a page cancel the mouse Back button and do a real history Back instead. In the game view Foundry keeps a guard history entry and answers `popstate` with an "exit the game?" `confirm()`. This module adds its own `popstate` listener at `init` in the capture phase, ahead of Foundry's. It swallows the event, re-adds the guard entry and steps back through sheets, so no prompt appears and the page stays. If one press arrives as both a mouse event and a `popstate`, it counts as a single step.
