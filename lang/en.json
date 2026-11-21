@@ -6,16 +6,12 @@
                 "Hint": "How many navigation steps to remember."
             },
             "reopenClosed": {
-                "Name": "Reopen closed sheets",
-                "Hint": "When going back to a sheet that has since been closed, reopen it. If disabled, closed sheets are skipped."
+                "Name": "Reopen closed windows",
+                "Hint": "When going back to a window that has since been closed, reopen it. If disabled, closed windows are skipped."
             },
             "forwardButton": {
                 "Name": "Use mouse Forward button",
                 "Hint": "Mouse Forward goes forward again after going back."
-            },
-            "captureBrowserBack": {
-                "Name": "Capture browser Back (Alt+Left)",
-                "Hint": "Also catch the browser's own Back navigation (Alt+Left, the browser's Back button) so it steps back through sheets instead of asking to exit the game. The mouse Back button is always handled."
             }
         }
     }
