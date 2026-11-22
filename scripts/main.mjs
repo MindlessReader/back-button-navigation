@@ -82,6 +82,27 @@ function snapshot(app) {
     return state;
 }
 
+/**
+ * The open, non-minimized window that is visually on top. V1 and V2 windows share
+ * ApplicationV2._maxZ, so their z-indexes are comparable.
+ */
+function frontWindow() {
+    let top = null;
+    let topZ = -Infinity;
+    const apps = new Set([...Object.values(ui.windows), ...foundry.applications.instances.values()]);
+    for (const app of apps) {
+        if (!isTracked(app) || !app.rendered || (app.minimized ?? app._minimized)) continue;
+        const el = app.element instanceof HTMLElement ? app.element : app.element?.[0];
+        if (!el?.isConnected) continue;
+        const z = Number(getComputedStyle(el).zIndex) || 0;
+        if (z > topZ) {
+            top = app;
+            topZ = z;
+        }
+    }
+    return top;
+}
+
 function current() {
     if (nav.detached) return null;
     return nav.entries[nav.index] ?? null;
@@ -289,7 +310,10 @@ async function go(delta) {
     nav.navigating = true;
     const start = nav.index;
     const wasDetached = nav.detached;
-    const from = current();
+    // When detached (the current window was closed), "where we are" is whatever window is now on top,
+    // so a step that would only re-show it (e.g. the window the closed one was opened from) is skipped.
+    const front = wasDetached ? frontWindow() : null;
+    const from = wasDetached ? (front ? { app: front, state: snapshot(front) } : null) : current();
     let removed = 0;
     try {
         // When detached, the position is just after entries[start], so Back starts at start itself.
